@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <body>
+  <script>
+    const ws = new WebSocket('ws://localhost:8080')
+
+    ws.binaryType = 'arraybuffer'
+    ws.onopen = () => {
+      ws.onmessage = (message) => {
+        console.log(new Uint8Array(message.data))
+      }
+
+      ws.send(new Uint8Array([0, 0]))
+      ws.send(new Uint8Array([1, 0, 65]))
+      ws.send(new Uint8Array([1, 0, 66, 67]))
+      ws.send(new Uint8Array([1, 0, 68]))
+      ws.send(new Uint8Array([2, 0]))
+      //ws.send(new Uint8Array([3, 0]))
+    }
+  </script>
+  </body>
+</html>

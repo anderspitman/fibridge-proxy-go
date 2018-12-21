@@ -4,18 +4,28 @@ import (
         "fmt"
         "log"
         "net/http"
-        "github.com/anderspitman/omnistreams-core-go"
-        "github.com/anderspitman/omnistreams-concurrent-go"
+        omnicore "github.com/anderspitman/omnistreams-core-go"
+        omniconc "github.com/anderspitman/omnistreams-concurrent-go"
+        "github.com/satori/go.uuid"
 )
 
 
 func main() {
 	fmt.Printf("Hi there\n")
 
+        muxes := make(map[uuid.UUID]*omniconc.Multiplexer)
+
         muxAcceptor := omniconc.CreateWebSocketMuxAcceptor()
 
         muxAcceptor.OnMux(func(mux *omniconc.Multiplexer) {
                 log.Println("got muxy")
+
+                id := uuid.Must(uuid.NewV4())
+
+                log.Println(id)
+
+                // TODO: need to delete muxes after connection closes
+                muxes[id] = mux
 
                 mux.OnControlMessage(func(message []byte) {
                         log.Println("Control message:", message)

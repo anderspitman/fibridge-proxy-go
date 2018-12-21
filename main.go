@@ -16,6 +16,11 @@ func main() {
 
         muxAcceptor.OnMux(func(mux *omniconc.Multiplexer) {
                 log.Println("got muxy")
+
+                mux.OnControlMessage(func(message []byte) {
+                        log.Println("Control message:", message)
+                })
+
                 mux.OnStream(func(stream omnicore.Producer) {
 
                         log.Println("Got a streamy")
@@ -27,7 +32,7 @@ func main() {
 
                         stream.OnEnd(func() {
                                 log.Println("end streamy")
-                                mux.SendControlMessage([]byte("hi there"))
+                                mux.SendControlMessage([]byte("all done"))
                         })
 
                         stream.Request(10)

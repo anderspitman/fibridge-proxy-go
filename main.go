@@ -5,6 +5,7 @@ import (
         "log"
         "net/http"
         "strings"
+        "encoding/json"
         omnicore "github.com/anderspitman/omnistreams-core-go"
         omniconc "github.com/anderspitman/omnistreams-concurrent-go"
         "github.com/satori/go.uuid"
@@ -29,7 +30,7 @@ func main() {
 
                 id := uuid.Must(uuid.NewV4())
 
-                fmt.Printf("curl localhost:9001/%s", id)
+                fmt.Printf("curl localhost:9001/%s\n", id)
 
                 // TODO: need to delete muxes after connection closes
                 muxes[id] = mux
@@ -51,11 +52,27 @@ func main() {
                                 streamChannel <- stream
                         }
                 })
+
+                m := make(map[string]string)
+                m["type"] = "complete-handshake"
+                stringId, err := id.MarshalText()
+                if err != nil {
+                        log.Println("error decoding uuid")
+                }
+                m["id"] = string(stringId)
+
+                msg, err := json.Marshal(m)
+                if err != nil {
+                        log.Println("error encoding handshake")
+                }
+
+                mux.SendControlMessage([]byte(msg))
         })
 
         var httpHandler = func(w http.ResponseWriter, r *http.Request) {
                 if r.Method == "GET" {
-                        id := uuid.Must(uuid.FromString(strings.Split(r.URL.Path, "/")[1]))
+                        pathParts := strings.Split(r.URL.Path, "/")
+                        id := uuid.Must(uuid.FromString(pathParts[1]))
                         // TODO: seems like this probably isn't concurrency-safe
                         mux := muxes[id]
 
@@ -68,9 +85,18 @@ func main() {
 
                                 done := make(chan bool)
 
-                                var msg [1]byte
-                                msg[0] = requestId
-                                mux.SendControlMessage(msg[:])
+                                getReq := make(map[string]string)
+                                getReq["requestId"] = string(requestId)
+                                getReq["type"] = "GET"
+                                getReq["url"] = "/" + strings.Join(pathParts[2:], "/")
+                                fmt.Println(getReq)
+
+                                getReqJson, err := json.Marshal(getReq)
+                                if err != nil {
+                                        log.Println("error encoding GET request")
+                                }
+
+                                mux.SendControlMessage([]byte(getReqJson))
 
                                 stream := <-streamChannel
 

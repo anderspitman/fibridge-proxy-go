@@ -59,7 +59,7 @@ func main() {
                         }
                 })
 
-                mux.OnStream(func(stream omnicore.Producer, metadata []byte) {
+                mux.OnConduit(func(producer omnicore.Producer, metadata []byte) {
 
                         log.Println("Got a streamy, use id", idForNextStream)
 
@@ -75,7 +75,7 @@ func main() {
                         streamChannel := streamChannels[md.Id]
 
                         if streamChannel != nil {
-                                streamChannel <- stream
+                                streamChannel <- producer
                         }
                 })
 
@@ -129,21 +129,21 @@ func main() {
 
                                 mux.SendControlMessage([]byte(getReqJson))
 
-                                stream := <-streamChannel
+                                producer := <-streamChannel
 
-                                stream.OnData(func(data []byte) {
+                                producer.OnData(func(data []byte) {
                                         //log.Println(len(data))
                                         w.Write(data)
-                                        stream.Request(1)
+                                        producer.Request(1)
                                 })
 
-                                stream.OnEnd(func() {
+                                producer.OnEnd(func() {
                                         log.Println("end streamy")
                                         //mux.SendControlMessage([]byte("all done"))
                                         done <- true
                                 })
 
-                                stream.Request(10)
+                                producer.Request(10)
 
                                 <-done
                         } else {

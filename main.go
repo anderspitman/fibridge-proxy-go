@@ -11,6 +11,17 @@ import (
         "github.com/satori/go.uuid"
 )
 
+type HandshakeMessage struct {
+        RequestId byte `json:"requestId"`
+        Type string `json:"type"`
+        Url string `json:"url"`
+}
+
+type StreamMetadata struct {
+        Id byte
+        Size uint32
+}
+
 
 func main() {
 	fmt.Printf("Hi there\n")
@@ -40,13 +51,28 @@ func main() {
                 mux.OnControlMessage(func(message []byte) {
                         log.Println("Control message:", message)
                         idForNextStream = message[0]
+
+                        m := make(map[string]string)
+                        err := json.Unmarshal(message, m)
+                        if err != nil {
+                                log.Println("error decoding control message")
+                        }
                 })
 
-                mux.OnStream(func(stream omnicore.Producer) {
+                mux.OnStream(func(stream omnicore.Producer, metadata []byte) {
 
                         log.Println("Got a streamy, use id", idForNextStream)
 
-                        streamChannel := streamChannels[idForNextStream]
+                        md := StreamMetadata{}
+                        err := json.Unmarshal(metadata, &md)
+                        if err != nil {
+                                log.Println("error decoding stream metadata")
+                        }
+
+                        fmt.Println(metadata)
+                        fmt.Println(md)
+
+                        streamChannel := streamChannels[md.Id]
 
                         if streamChannel != nil {
                                 streamChannel <- stream
@@ -85,10 +111,15 @@ func main() {
 
                                 done := make(chan bool)
 
-                                getReq := make(map[string]string)
-                                getReq["requestId"] = string(requestId)
-                                getReq["type"] = "GET"
-                                getReq["url"] = "/" + strings.Join(pathParts[2:], "/")
+                                getReq := HandshakeMessage {
+                                        requestId,
+                                        "GET",
+                                        "/" + strings.Join(pathParts[2:], "/"),
+                                }
+                                //getReq := make(map[string]string)
+                                //getReq["requestId"] = string(requestId)
+                                //getReq["type"] = "GET"
+                                //getReq["url"] = "/" + strings.Join(pathParts[2:], "/")
                                 fmt.Println(getReq)
 
                                 getReqJson, err := json.Marshal(getReq)
@@ -101,7 +132,7 @@ func main() {
                                 stream := <-streamChannel
 
                                 stream.OnData(func(data []byte) {
-                                        log.Println(len(data))
+                                        //log.Println(len(data))
                                         w.Write(data)
                                         stream.Request(1)
                                 })

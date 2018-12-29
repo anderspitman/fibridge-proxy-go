@@ -20,19 +20,32 @@ type GetRequestMessage struct {
 }
 
 type HttpRange struct {
-        Start int `json:"start"`
+        Start uint64 `json:"start"`
         // Note: if end is 0 it won't be included in the json because of omitempty
-        End int `json:"end,omitempty"`
+        End uint64 `json:"end,omitempty"`
 }
 
 type StreamMetadata struct {
         Id byte `json:"id"`
-        Size uint32 `json:"url"`
+        Size uint64 `json:"size"`
+}
+
+type ControlMessage struct {
+        Type string `json:"type"`
+        Code int `json:"code"`
+        RequestId byte `json:"requestId"`
+        Message string `json:"message"`
+}
+
+type RequestResult struct {
+        success bool
+        producer omnicore.Producer
+        metadata *StreamMetadata
 }
 
 
 func main() {
-	fmt.Printf("Hi there\n")
+        fmt.Println("Started")
 
         muxes := make(map[uuid.UUID]*omniconc.Multiplexer)
 
@@ -40,50 +53,56 @@ func main() {
         var nextRequestId byte
         nextRequestId = 0
 
-        streamChannels := make(map[byte]chan(omnicore.Producer))
+        streamChannels := make(map[byte]chan(RequestResult))
 
         muxAcceptor := omniconc.CreateWebSocketMuxAcceptor()
 
         muxAcceptor.OnMux(func(mux *omniconc.Multiplexer) {
-                log.Println("got muxy")
 
                 id := uuid.Must(uuid.NewV4())
-
-                fmt.Printf("curl localhost:9001/%s\n", id)
 
                 // TODO: need to delete muxes after connection closes
                 muxes[id] = mux
 
-                var idForNextStream byte
-
                 mux.OnControlMessage(func(message []byte) {
-                        log.Println("Control message:", message)
-                        idForNextStream = message[0]
-
-                        m := make(map[string]string)
-                        err := json.Unmarshal(message, m)
+                        m := ControlMessage{}
+                        err := json.Unmarshal(message, &m)
                         if err != nil {
-                                log.Println("error decoding control message")
+                                log.Println(err)
+                        }
+
+                        log.Println("Control message:")
+                        log.Println(m)
+
+                        if m.Type == "error" {
+                                streamChannel := streamChannels[m.RequestId]
+
+                                if streamChannel != nil {
+                                        streamChannel <- RequestResult {
+                                                false,
+                                                nil,
+                                                nil,
+                                        }
+                                }
                         }
                 })
 
                 mux.OnConduit(func(producer omnicore.Producer, metadata []byte) {
 
-                        log.Println("Got a streamy, use id", idForNextStream)
-
                         md := StreamMetadata{}
                         err := json.Unmarshal(metadata, &md)
                         if err != nil {
-                                log.Println("error decoding stream metadata")
+                                log.Println(err)
                         }
-
-                        fmt.Println(metadata)
-                        fmt.Println(md)
 
                         streamChannel := streamChannels[md.Id]
 
                         if streamChannel != nil {
-                                streamChannel <- producer
+                                streamChannel <- RequestResult {
+                                        true,
+                                        producer,
+                                        &md,
+                                }
                         }
                 })
 
@@ -114,7 +133,7 @@ func main() {
                                 requestId := nextRequestId
                                 nextRequestId++
 
-                                streamChannel := make(chan omnicore.Producer)
+                                streamChannel := make(chan RequestResult)
                                 streamChannels[requestId] = streamChannel
 
                                 done := make(chan bool)
@@ -141,28 +160,63 @@ func main() {
 
                                 mux.SendControlMessage([]byte(getReqJson))
 
-                                producer := <-streamChannel
+                                finished := false
+                                ended := false
 
-                                producer.OnData(func(data []byte) {
-                                        //log.Println(len(data))
-                                        w.Write(data)
+                                go func() {
+                                        <-r.Context().Done()
+
+                                        finished = true
+
+                                        if ended {
+                                                fmt.Println("ended normally")
+                                                done <- true
+                                        } else {
+                                                fmt.Println("canceled")
+                                                done <- false
+                                        }
+                                }()
+
+                                // Will block here until client receives request and starts streaming
+                                result := <-streamChannel
+
+                                if result.success {
+                                        if httpRange != nil {
+                                                w.Header()["Content-Range"] = buildRangeHeader(httpRange, result.metadata.Size)
+                                        }
+
+
+                                        producer := result.producer
+
+                                        producer.OnData(func(data []byte) {
+                                                if !finished {
+                                                        w.Write(data)
+                                                        producer.Request(1)
+                                                }
+                                        })
+
+                                        producer.OnEnd(func() {
+                                                ended = true
+                                                done <- true
+                                        })
+
+                                        // TODO: increase this to more than 1, which effectively gives a buffer.
+                                        // Need to handle queuing in that case though because otherwise it can
+                                        // block on Write and get deadlocked
                                         producer.Request(1)
-                                })
 
-                                producer.OnEnd(func() {
-                                        log.Println("end streamy")
-                                        //mux.SendControlMessage([]byte("all done"))
-                                        done <- true
-                                })
+                                        endedNormally := <-done
 
-                                producer.Request(10)
-
-                                <-done
+                                        if !endedNormally {
+                                                //producer.cancel()
+                                        }
+                                } else {
+                                        w.WriteHeader(http.StatusNotFound)
+                                }
                         } else {
                                 w.Write([]byte("invalid uuid"))
                         }
 
-                        log.Println("exit handler")
                 } else {
                         w.Write([]byte("Method not supported"))
                 }
@@ -183,18 +237,27 @@ func parseRange(header []string) *HttpRange {
 
                 start, err := strconv.Atoi(rangeParts[0])
                 if err != nil {
-                        log.Println("start fail")
+                        log.Println("Decode range start failed")
                 }
                 end, err := strconv.Atoi(rangeParts[1])
                 if err != nil {
-                        log.Println("end fail")
+                        log.Println("Decode range end failed")
                 }
-                fmt.Println(rangeParts)
                 return &HttpRange {
-                        Start: start,
-                        End: end,
+                        Start: uint64(start),
+                        End: uint64(end),
                 }
         } else {
                 return nil
         }
+}
+
+func buildRangeHeader(r *HttpRange, size uint64) []string {
+
+        if r.End == 0 {
+                r.End = size - 1
+        }
+
+        contentRange := fmt.Sprintf("bytes %d-%d/%d", r.Start, r.End, size)
+        return []string{contentRange}
 }

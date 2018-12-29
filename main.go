@@ -5,21 +5,29 @@ import (
         "log"
         "net/http"
         "strings"
+        "strconv"
         "encoding/json"
         omnicore "github.com/anderspitman/omnistreams-core-go"
         omniconc "github.com/anderspitman/omnistreams-concurrent-go"
         "github.com/satori/go.uuid"
 )
 
-type HandshakeMessage struct {
+type GetRequestMessage struct {
         RequestId byte `json:"requestId"`
         Type string `json:"type"`
         Url string `json:"url"`
+        Range *HttpRange `json:"range,omitempty"`
+}
+
+type HttpRange struct {
+        Start int `json:"start"`
+        // Note: if end is 0 it won't be included in the json because of omitempty
+        End int `json:"end,omitempty"`
 }
 
 type StreamMetadata struct {
-        Id byte
-        Size uint32
+        Id byte `json:"id"`
+        Size uint32 `json:"url"`
 }
 
 
@@ -111,21 +119,25 @@ func main() {
 
                                 done := make(chan bool)
 
-                                getReq := HandshakeMessage {
+                                httpRange := parseRange(r.Header["Range"])
+
+                                getReq := GetRequestMessage {
                                         requestId,
                                         "GET",
                                         "/" + strings.Join(pathParts[2:], "/"),
+                                        httpRange,
                                 }
                                 //getReq := make(map[string]string)
                                 //getReq["requestId"] = string(requestId)
                                 //getReq["type"] = "GET"
                                 //getReq["url"] = "/" + strings.Join(pathParts[2:], "/")
-                                fmt.Println(getReq)
 
                                 getReqJson, err := json.Marshal(getReq)
                                 if err != nil {
                                         log.Println("error encoding GET request")
                                 }
+
+                                fmt.Println(string(getReqJson))
 
                                 mux.SendControlMessage([]byte(getReqJson))
 
@@ -159,4 +171,30 @@ func main() {
         http.HandleFunc("/", httpHandler)
         http.HandleFunc("/omnistreams", muxAcceptor.GetHttpHandler())
         log.Fatal(http.ListenAndServe("localhost:9001", nil))
+}
+
+func parseRange(header []string) *HttpRange {
+
+        if len(header) > 0 {
+
+                // TODO: this is very hacky and brittle
+                parts := strings.Split(header[0], "=")
+                rangeParts := strings.Split(parts[1], "-")
+
+                start, err := strconv.Atoi(rangeParts[0])
+                if err != nil {
+                        log.Println("start fail")
+                }
+                end, err := strconv.Atoi(rangeParts[1])
+                if err != nil {
+                        log.Println("end fail")
+                }
+                fmt.Println(rangeParts)
+                return &HttpRange {
+                        Start: start,
+                        End: end,
+                }
+        } else {
+                return nil
+        }
 }

@@ -43,6 +43,11 @@ type RequestResult struct {
         metadata *StreamMetadata
 }
 
+// This is measured in omnistreams elements. In the current fibridge
+// implementation each element is a 1MiB chunk, so this buffer translates
+// to 100MiB
+const BUFFER_SIZE uint8 = 100
+
 
 func main() {
         fmt.Println("Started")
@@ -160,7 +165,9 @@ func main() {
 
                                 mux.SendControlMessage([]byte(getReqJson))
 
+                                // TODO: finished might not be needed
                                 finished := false
+
                                 ended := false
 
                                 go func() {
@@ -169,10 +176,10 @@ func main() {
                                         finished = true
 
                                         if ended {
-                                                fmt.Println("ended normally")
+                                                log.Println("Ended normally")
                                                 done <- true
                                         } else {
-                                                fmt.Println("canceled")
+                                                log.Println("Disconnected")
                                                 done <- false
                                         }
                                 }()
@@ -185,30 +192,40 @@ func main() {
                                                 w.Header()["Content-Range"] = buildRangeHeader(httpRange, result.metadata.Size)
                                         }
 
-
                                         producer := result.producer
 
+                                        dataChan := make(chan []byte, BUFFER_SIZE)
+
                                         producer.OnData(func(data []byte) {
-                                                if !finished {
-                                                        w.Write(data)
-                                                        producer.Request(1)
-                                                }
+						dataChan <- data
                                         })
 
-                                        producer.OnEnd(func() {
+				        go func() {
+					        for data := range dataChan {
+						        if !finished {
+								w.Write(data)
+								producer.Request(1)
+							}
+						}
+
                                                 ended = true
+                                                finished = true
                                                 done <- true
+					}()
+
+                                        producer.OnEnd(func() {
+                                                close(dataChan)
                                         })
 
                                         // TODO: increase this to more than 1, which effectively gives a buffer.
                                         // Need to handle queuing in that case though because otherwise it can
                                         // block on Write and get deadlocked
-                                        producer.Request(1)
+                                        producer.Request(BUFFER_SIZE)
 
                                         endedNormally := <-done
 
                                         if !endedNormally {
-                                                //producer.cancel()
+                                                producer.Cancel()
                                         }
                                 } else {
                                         w.WriteHeader(http.StatusNotFound)

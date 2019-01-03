@@ -9,6 +9,7 @@ import (
         "encoding/json"
         omnicore "github.com/anderspitman/omnistreams-core-go"
         omniconc "github.com/anderspitman/omnistreams-concurrent-go"
+        omniwriter "github.com/anderspitman/omnistreams-writer-adapter-go"
         "github.com/satori/go.uuid"
 )
 
@@ -46,7 +47,7 @@ type RequestResult struct {
 // This is measured in omnistreams elements. In the current fibridge
 // implementation each element is a 1MiB chunk, so this buffer translates
 // to 100MiB
-const BUFFER_SIZE uint8 = 100
+const BUFFER_SIZE uint32 = 100
 
 
 func main() {
@@ -193,34 +194,45 @@ func main() {
                                         }
 
                                         producer := result.producer
-
-                                        dataChan := make(chan []byte, BUFFER_SIZE)
-
-                                        producer.OnData(func(data []byte) {
-						dataChan <- data
-                                        })
-
-				        go func() {
-					        for data := range dataChan {
-						        if !finished {
-								w.Write(data)
-								producer.Request(1)
-							}
-						}
-
+                                        consumer := omniwriter.CreateWriterAdapter(w, uint32(BUFFER_SIZE))
+                                        consumer.OnFinished(func() {
                                                 ended = true
                                                 finished = true
                                                 done <- true
-					}()
-
-                                        producer.OnEnd(func() {
-                                                close(dataChan)
                                         })
 
-                                        // TODO: increase this to more than 1, which effectively gives a buffer.
-                                        // Need to handle queuing in that case though because otherwise it can
-                                        // block on Write and get deadlocked
+                                        producer.Pipe(consumer)
                                         producer.Request(BUFFER_SIZE)
+
+                                        //dataChan := make(chan []byte, BUFFER_SIZE)
+
+                                        //producer.OnData(func(data []byte) {
+					//	dataChan <- data
+                                        //})
+
+				        //go func() {
+					//        for data := range dataChan {
+					//	        if !finished {
+					//			w.Write(data)
+					//			producer.Request(1)
+					//		}
+					//	}
+
+                                        //        ended = true
+                                        //        finished = true
+                                        //        done <- true
+					//}()
+
+                                        //producer.OnEnd(func() {
+                                        //        close(dataChan)
+                                        //})
+
+                                        //producer.OnCancel(func() {
+                                        //        fmt.Println("Yo man I been canceled")
+                                        //})
+
+                                        //producer.Request(BUFFER_SIZE)
+
 
                                         endedNormally := <-done
 
